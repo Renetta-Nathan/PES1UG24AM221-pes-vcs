@@ -376,7 +376,11 @@ The test program verifies:
 
 **📸 Screenshot 1A:** Output of `./test_objects` showing all tests passing.
 
+<img width="913" height="213" alt="image" src="https://github.com/user-attachments/assets/5fd4516a-e0b6-4707-9457-15578ed8342b" />
+
 **📸 Screenshot 1B:** `find .pes/objects -type f` showing the sharded directory structure.
+
+<img width="656" height="97" alt="image" src="https://github.com/user-attachments/assets/ebb888f6-2cc6-47f1-befe-c2fb1729e6d4" />
 
 ---
 
@@ -408,7 +412,11 @@ The test program verifies:
 
 **📸 Screenshot 2A:** Output of `./test_tree` showing all tests passing.
 
+<img width="482" height="126" alt="image" src="https://github.com/user-attachments/assets/3c6e1a76-5df7-4b52-9439-00b49b16def4" />
+
 **📸 Screenshot 2B:** Pick a tree object from `find .pes/objects -type f` and run `xxd .pes/objects/XX/YYY... | head -20` to show the raw binary format.
+
+<img width="1127" height="143" alt="image" src="https://github.com/user-attachments/assets/86268758-98c4-476e-9a7e-9a624d2f8716" />
 
 ---
 
