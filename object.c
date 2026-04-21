@@ -17,6 +17,13 @@
 #include <unistd.h>
 #include <openssl/evp.h>
 
+#ifdef _WIN32
+#include <io.h>
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#define fsync(fd) _commit(fd)
+#endif
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 void hash_to_hex(const ObjectID *id, char *hex_out) {
@@ -94,35 +101,144 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+    const char *type_str = (type == OBJ_BLOB) ? "blob" : (type == OBJ_TREE) ? "tree" : "commit";
+    
+    // 1. Build the full object
+    char header[64];
+    int header_len = sprintf(header, "%s %zu", type_str, len) + 1; // +1 for \0
+    
+    size_t full_len = header_len + len;
+    void *full_data = malloc(full_len);
+    if (!full_data) return -1;
+    
+    memcpy(full_data, header, header_len);
+    memcpy((char *)full_data + header_len, data, len);
+    
+    // 2. Compute SHA-256 hash
+    compute_hash(full_data, full_len, id_out);
+    
+    // 3. Deduplication
+    if (object_exists(id_out)) {
+        free(full_data);
+        return 0;
+    }
+    
+    // 4. Create shard directory
+    char path[512];
+    object_path(id_out, path, sizeof(path));
+    
+    char shard_dir[512];
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    snprintf(shard_dir, sizeof(shard_dir), "%s/%.2s", OBJECTS_DIR, hex);
+    mkdir(shard_dir, 0755);
+    
+    // 5. Write to temporary file
+    char tmp_path[512];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/%s.tmp", shard_dir, hex + 2);
+    
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
+    int fd = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, 0644);
+    if (fd < 0) {
+        free(full_data);
+        return -1;
+    }
+    
+    if (write(fd, full_data, full_len) != (ssize_t)full_len) {
+        close(fd);
+        unlink(tmp_path);
+        free(full_data);
+        return -1;
+    }
+    
+    // 6. fsync data
+    fsync(fd);
+    close(fd);
+    
+    // 7. rename to final path
+    if (rename(tmp_path, path) != 0) {
+        unlink(tmp_path);
+        free(full_data);
+        return -1;
+    }
+    
+    // 8. fsync directory (best practice for persistence on POSIX, not applicable on Windows)
+#ifndef _WIN32
+    int dfd = open(shard_dir, O_RDONLY);
+    if (dfd >= 0) {
+        fsync(dfd);
+        close(dfd);
+    }
+#endif
+    
+    free(full_data);
+    return 0;
 }
 
 // Read an object from the store.
-//
-// Steps:
-//   1. Build the file path from the hash using object_path()
-//   2. Open and read the entire file
-//   3. Parse the header to extract the type string and size
-//   4. Verify integrity: recompute the SHA-256 of the file contents
-//      and compare to the expected hash (from *id). Return -1 if mismatch.
-//   5. Set *type_out to the parsed ObjectType
-//   6. Allocate a buffer, copy the data portion (after the \0), set *data_out and *len_out
-//
-// HINTS - Useful syscalls and functions for this phase:
-//   - object_path        : getting the target file path
-//   - fopen, fread, fseek: reading the file into memory
-//   - memchr             : safely finding the '\0' separating header and data
-//   - strncmp            : parsing the type string ("blob", "tree", "commit")
-//   - compute_hash       : re-hashing the read data for integrity verification
-//   - memcmp             : comparing the computed hash against the requested hash
-//   - malloc, memcpy     : allocating and returning the extracted data
-//
-// The caller is responsible for calling free(*data_out).
-// Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    char path[512];
+    object_path(id, path, sizeof(path));
+    
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    
+    fseek(f, 0, SEEK_END);
+    size_t full_len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    void *full_data = malloc(full_len);
+    if (!full_data || fread(full_data, 1, full_len, f) != full_len) {
+        if (full_data) free(full_data);
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    
+    // Integrity check
+    ObjectID actual_id;
+    compute_hash(full_data, full_len, &actual_id);
+    if (memcmp(id->hash, actual_id.hash, HASH_SIZE) != 0) {
+        free(full_data);
+        return -1;
+    }
+    
+    // Parse header
+    char *header = (char *)full_data;
+    char *null_byte = memchr(header, '\0', full_len);
+    if (!null_byte) {
+        free(full_data);
+        return -1;
+    }
+    
+    size_t header_len = (null_byte - header) + 1;
+    char type_str[16];
+    size_t data_size;
+    if (sscanf(header, "%15s %zu", type_str, &data_size) != 2) {
+        free(full_data);
+        return -1;
+    }
+    
+    if (strcmp(type_str, "blob") == 0) *type_out = OBJ_BLOB;
+    else if (strcmp(type_str, "tree") == 0) *type_out = OBJ_TREE;
+    else if (strcmp(type_str, "commit") == 0) *type_out = OBJ_COMMIT;
+    else {
+        free(full_data);
+        return -1;
+    }
+    
+    *len_out = data_size;
+    *data_out = malloc(data_size);
+    if (!*data_out) {
+        free(full_data);
+        return -1;
+    }
+    
+    memcpy(*data_out, (char *)full_data + header_len, data_size);
+    free(full_data);
+    
+    return 0;
 }
