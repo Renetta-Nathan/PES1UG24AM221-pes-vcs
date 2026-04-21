@@ -474,7 +474,12 @@ cat .pes/index    # Human-readable text format
 
 **📸 Screenshot 3A:** Run `./pes init`, `./pes add file1.txt file2.txt`, `./pes status` — show the output.
 
+<img width="567" height="495" alt="image" src="https://github.com/user-attachments/assets/757f1ca2-ab77-43c9-88de-4b5045d11585" />
+
+
 **📸 Screenshot 3B:** `cat .pes/index` showing the text-format index with your entries.
+
+<img width="1024" height="74" alt="image" src="https://github.com/user-attachments/assets/1f0dea62-8d3e-4c20-8931-25ca485e6364" />
 
 ---
 
@@ -525,7 +530,11 @@ make test-integration
 
 **📸 Screenshot 4A:** Output of `./pes log` showing three commits with hashes, authors, timestamps, and messages.
 
+<img width="1105" height="601" alt="image" src="https://github.com/user-attachments/assets/9079fecb-baf0-4ccd-bcfb-8ce32720167a" />
+
+
 **📸 Screenshot 4B:** `find .pes -type f | sort` showing object store growth after three commits.
+
 
 **📸 Screenshot 4C:** `cat .pes/refs/heads/main` and `cat .pes/HEAD` showing the reference chain.
 
@@ -547,11 +556,17 @@ Answer: You would compare the file's metadata (size, mtime) in the working direc
 
 **Q5.3:** "Detached HEAD" means HEAD contains a commit hash directly instead of a branch reference. What happens if you make commits in this state? How could a user recover those commits?
 
+Answer: Commits made in a "detached HEAD" state are successful, and the HEAD file is updated with the new commit's hash. However, since no branch reference points to these commits, they can become "dangling" if you switch to another branch. A user can recover them by creating a new branch at that commit's hash (pes branch <name> <hash>) or by finding the hash manually before the garbage collector removes them.
+
 ### Garbage Collection and Space Reclamation
 
 **Q6.1:** Over time, the object store accumulates unreachable objects — blobs, trees, or commits that no branch points to (directly or transitively). Describe an algorithm to find and delete these objects. What data structure would you use to track "reachable" hashes efficiently? For a repository with 100,000 commits and 50 branches, estimate how many objects you'd need to visit.
 
+Answer: Use a Mark-and-Sweep algorithm. Starting from all known references (branches, tags, HEAD), recursively traverse the commit objects and their tree hierarchies, adding every encountered hash to a Hash Set of "reachable" objects. Then, iterate through all files in .pes/objects/ and delete any file whose hash is not in the reachable set. For 100,000 commits and 50 branches, you would visit at least 100,050 objects (commits and refs) plus all unique tree and blob objects associated with them.
+
 **Q6.2:** Why is it dangerous to run garbage collection concurrently with a commit operation? Describe a race condition where GC could delete an object that a concurrent commit is about to reference. How does Git's real GC avoid this?
+
+Answer: GC could delete an object that is in the process of being staged but hasn't yet been linked to a commit. For example, a pes add writes a new blob, but before pes commit creates the tree/commit pointing to it, the GC runner might identify the blob as unreachable and delete it. Git avoids this by using a grace period (only deleting objects older than two weeks) and by using lock files to ensure index/ref updates are atomic.
 
 ---
 
@@ -587,23 +602,6 @@ Answer: You would compare the file's metadata (size, mtime) in the working direc
 | ------------------------- | ---------------- |
 | Branching (analysis-only) | Q5.1, Q5.2, Q5.3 |
 | GC (analysis-only)        | Q6.1, Q6.2       |
-
------------
-
-## Submission Requirements
-
-**1. GitHub Repository**
-* You must submit the link to your GitHub repository via the official submission link (which will be shared by your respective faculty).
-* The repository must strictly maintain the directory structure you built throughout this lab.
-* Ensure your github repository is made `public`
-
-**2. Lab Report**
-* Your report, containing all required **screenshots** and answers to the **analysis questions**, must be placed at the **root** of your repository directory.
-* The report must be submitted as either a PDF (`report.pdf`) or a Markdown file (`README.md`).
-
-**3. Commit History (Graded Requirement)**
-* **Minimum Requirement:** You must have a minimum of **5 commits per phase** with appropriate commit messages. Submitting fewer than 5 commits for any given phase will result in a deduction of marks.
-* **Best Practices:** We highly prefer more than 5 detailed commits per phase. Granular commits that clearly show the delta in code block changes allow us to verify your step-by-step understanding of the concepts and prevent penalties <3
 
 ---
 
